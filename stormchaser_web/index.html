@@ -1,0 +1,1202 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StormChaser: Interceptor Protocol</title>
+    <style>
+        :root {
+            --hud-color: #00ffcc;
+            --hud-bg: rgba(0, 20, 40, 0.85);
+            --danger-color: #ff3333;
+            --warning-color: #ffaa00;
+            --font-main: 'Courier New', Courier, monospace;
+        }
+
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050505;
+            font-family: var(--font-main);
+            color: var(--hud-color);
+            user-select: none;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* HUD Overlay */
+        #hud {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: grid;
+            grid-template-columns: 300px 1fr 300px;
+            grid-template-rows: 100px 1fr 150px;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        .panel {
+            background: var(--hud-bg);
+            border: 1px solid var(--hud-color);
+            border-radius: 4px;
+            padding: 10px;
+            box-shadow: 0 0 10px rgba(0, 255, 204, 0.2);
+            backdrop-filter: blur(4px);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        /* Top Left: Vehicle Status */
+        #vehicle-status {
+            grid-column: 1;
+            grid-row: 1;
+            align-self: start;
+        }
+
+        /* Top Right: Wind Data */
+        #wind-data {
+            grid-column: 3;
+            grid-row: 1;
+            align-self: start;
+            text-align: right;
+        }
+
+        /* Bottom Left: Controls & Info */
+        #controls-info {
+            grid-column: 1;
+            grid-row: 3;
+            align-self: end;
+            font-size: 0.8rem;
+        }
+
+        /* Bottom Right: Radar/Score */
+        #radar-score {
+            grid-column: 3;
+            grid-row: 3;
+            align-self: end;
+            text-align: right;
+        }
+
+        /* Center Bottom: Speedometer */
+        #speedometer-container {
+            grid-column: 2;
+            grid-row: 3;
+            align-self: end;
+            justify-self: center;
+            width: 400px;
+            height: 120px;
+            background: radial-gradient(circle at bottom, rgba(0, 50, 80, 0.9), transparent);
+            border-top: 2px solid var(--hud-color);
+            border-left: 1px solid var(--hud-color);
+            border-right: 1px solid var(--hud-color);
+            border-bottom: none;
+            border-radius: 20px 20px 0 0;
+            position: relative;
+        }
+
+        h2, h3 {
+            margin: 0 0 5px 0;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            font-size: 1rem;
+            text-shadow: 0 0 5px var(--hud-color);
+        }
+
+        .data-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 4px;
+            font-size: 0.9rem;
+        }
+
+        .value-high { color: var(--warning-color); }
+        .value-crit { color: var(--danger-color); animation: blink 0.5s infinite; }
+
+        @keyframes blink { 50% { opacity: 0.5; } }
+
+        /* Bars */
+        .bar-container {
+            width: 100%;
+            height: 8px;
+            background: #111;
+            margin-top: 2px;
+            border: 1px solid #333;
+        }
+        .bar-fill {
+            height: 100%;
+            background: var(--hud-color);
+            width: 100%;
+            transition: width 0.2s, background 0.2s;
+        }
+
+        /* Key hints */
+        .key {
+            display: inline-block;
+            background: #333;
+            color: #fff;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: bold;
+            font-size: 0.7rem;
+            margin-right: 5px;
+            border-bottom: 2px solid #111;
+        }
+
+        #start-screen, #game-over-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+            pointer-events: auto;
+        }
+
+        .hidden { display: none !important; }
+
+        button {
+            background: transparent;
+            color: var(--hud-color);
+            border: 2px solid var(--hud-color);
+            padding: 15px 40px;
+            font-family: var(--font-main);
+            font-size: 1.2rem;
+            cursor: pointer;
+            text-transform: uppercase;
+            transition: all 0.3s;
+            margin-top: 20px;
+        }
+
+        button:hover {
+            background: var(--hud-color);
+            color: #000;
+            box-shadow: 0 0 20px var(--hud-color);
+        }
+
+        .title {
+            font-size: 3rem;
+            color: #fff;
+            text-shadow: 0 0 20px var(--hud-color);
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #aaa;
+            margin-bottom: 30px;
+        }
+
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- HUD -->
+    <div id="hud">
+        <!-- Vehicle Status -->
+        <div id="vehicle-status" class="panel">
+            <h3>Interceptor X-1</h3>
+            <div class="data-row">
+                <span>Integridad:</span>
+                <span id="health-val">100%</span>
+            </div>
+            <div class="bar-container"><div id="health-bar" class="bar-fill"></div></div>
+            
+            <div class="data-row" style="margin-top: 10px;">
+                <span>Turbo:</span>
+                <span id="turbo-val">100%</span>
+            </div>
+            <div class="bar-container"><div id="turbo-bar" class="bar-fill"></div></div>
+
+            <div class="data-row" style="margin-top: 10px;">
+                <span>Anclaje:</span>
+                <span id="anchor-status" style="color: #555;">DESACTIVADO</span>
+            </div>
+            <div class="data-row">
+                <span>Sondas:</span>
+                <span id="probe-count">0/5</span>
+            </div>
+        </div>
+
+        <!-- Wind Data -->
+        <div id="wind-data" class="panel">
+            <h3>Datos Atmosféricos</h3>
+            <div class="data-row">
+                <span>Viento Local:</span>
+                <span id="wind-speed" class="value-high">0 km/h</span>
+            </div>
+            <div class="data-row">
+                <span>Dirección:</span>
+                <span id="wind-dir">N</span>
+            </div>
+            <div class="data-row" style="margin-top: 10px; border-top: 1px solid #333; padding-top: 5px;">
+                <span>Amenaza:</span>
+                <span id="threat-level">BAJA</span>
+            </div>
+            <div class="data-row">
+                <span>Categoría EF:</span>
+                <span id="ef-category">-</span>
+            </div>
+        </div>
+
+        <!-- Controls -->
+        <div id="controls-info" class="panel">
+            <h3>Controles</h3>
+            <div><span class="key">WASD</span> Mover / Conducir</div>
+            <div><span class="key">ESPACIO</span> Turbo (Nitro)</div>
+            <div><span class="key">E</span> Activar Pinchos (Anclaje)</div>
+            <div><span class="key">Q</span> Lanzar Sonda de Datos</div>
+            <div style="margin-top: 10px; color: #888; font-size: 0.75rem;">
+                * Los pinchos reducen el daño por viento pero inmovilizan.<br>
+                * Las sondas requieren proximidad al ojo del tornado.
+            </div>
+        </div>
+
+        <!-- Speedometer -->
+        <div id="speedometer-container">
+            <canvas id="speedoCanvas" width="400" height="120"></canvas>
+        </div>
+
+        <!-- Radar/Score -->
+        <div id="radar-score" class="panel">
+            <h3>Misión</h3>
+            <div class="data-row">
+                <span>Puntuación:</span>
+                <span id="score-val">0</span>
+            </div>
+            <div class="data-row">
+                <span>Nivel:</span>
+                <span id="level-val">1</span>
+            </div>
+            <div style="margin-top: 10px; width: 100px; height: 100px; background: #001100; border: 1px solid #0f0; border-radius: 50%; margin-left: auto; position: relative; overflow: hidden;">
+                <canvas id="radarCanvas" width="100" height="100" style="position: absolute; top:0; left:0;"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Start Screen -->
+    <div id="start-screen">
+        <h1 class="title">STORM CHASER</h1>
+        <div class="subtitle">Protocolo Interceptor X-1</div>
+        <p>Recopila datos de los tornados. Sobrevive.</p>
+        <button onclick="startGame()">Iniciar Misión</button>
+    </div>
+
+    <!-- Game Over Screen -->
+    <div id="game-over-screen" class="hidden">
+        <h1 class="title" style="color: var(--danger-color)">VEHÍCULO DESTRUIDO</h1>
+        <div class="subtitle">Misión Terminada</div>
+        <div class="data-row" style="font-size: 1.5rem; margin-bottom: 20px;">
+            Puntuación Final: <span id="final-score" style="color: #fff; margin-left: 10px;">0</span>
+        </div>
+        <button onclick="resetGame()">Reintentar</button>
+    </div>
+</div>
+
+<script>
+/**
+ * STORM CHASER - CORE ENGINE
+ * Features: Physics, Particle System, Procedural Tornadoes, Vehicle Mechanics
+ */
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const speedoCanvas = document.getElementById('speedoCanvas');
+const speedoCtx = speedoCanvas.getContext('2d');
+const radarCanvas = document.getElementById('radarCanvas');
+const radarCtx = radarCanvas.getContext('2d');
+
+// Game State
+let gameRunning = false;
+let score = 0;
+let level = 1;
+let frameCount = 0;
+let lastTime = 0;
+
+// Input State
+const keys = {
+    w: false, a: false, s: false, d: false,
+    ArrowUp: false, ArrowLeft: false, ArrowDown: false, ArrowRight: false,
+    Space: false, e: false, q: false
+};
+
+// Camera
+const camera = { x: 0, y: 0, shake: 0 };
+
+// Entities
+let player;
+let tornados = [];
+let probes = [];
+let particles = [];
+let debris = [];
+
+// Constants
+const WORLD_SIZE = 4000;
+const GRAVITY_FRICTION = 0.96;
+const ROAD_FRICTION = 0.98;
+const OFFROAD_FRICTION = 0.92;
+
+// --- CLASSES ---
+
+class Vector {
+    constructor(x, y) { this.x = x; this.y = y; }
+    add(v) { this.x += v.x; this.y += v.y; }
+    mult(n) { this.x *= n; this.y *= n; }
+    mag() { return Math.sqrt(this.x*this.x + this.y*this.y); }
+    normalize() {
+        let m = this.mag();
+        if(m > 0) this.mult(1/m);
+    }
+}
+
+class Particle {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.type = type; // 'rain', 'spark', 'dust', 'debris'
+        this.life = 1.0;
+        this.decay = Math.random() * 0.02 + 0.01;
+        
+        const angle = Math.random() * Math.PI * 2;
+        const speed = Math.random() * 2;
+        this.vx = Math.cos(angle) * speed;
+        this.vy = Math.sin(angle) * speed;
+
+        if (type === 'rain') {
+            this.vy = Math.random() * 10 + 15;
+            this.vx = (Math.random() - 0.5) * 2;
+            this.decay = 0.005;
+        } else if (type === 'spark') {
+            this.vy = -Math.random() * 5;
+            this.decay = 0.05;
+        }
+    }
+
+    update(windX, windY) {
+        this.x += this.vx + windX * 0.1;
+        this.y += this.vy + windY * 0.1;
+        this.life -= this.decay;
+
+        if (this.type === 'rain' && this.y > player.y + 600) {
+            this.y = player.y - 600;
+            this.life = 1;
+        }
+    }
+
+    draw(ctx, camX, camY) {
+        ctx.globalAlpha = this.life;
+        if (this.type === 'rain') {
+            ctx.strokeStyle = '#aaf';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(this.x - camX, this.y - camY);
+            ctx.lineTo(this.x - camX + this.vx, this.y - camY + this.vy);
+            ctx.stroke();
+        } else if (this.type === 'spark') {
+            ctx.fillStyle = '#ffaa00';
+            ctx.fillRect(this.x - camX, this.y - camY, 2, 2);
+        } else if (this.type === 'debris') {
+            ctx.fillStyle = '#554433';
+            ctx.fillRect(this.x - camX, this.y - camY, 4, 4);
+        }
+        ctx.globalAlpha = 1.0;
+    }
+}
+
+class Probe {
+    constructor(x, y, angle) {
+        this.x = x;
+        this.y = y;
+        this.vx = Math.cos(angle) * 15;
+        this.vy = Math.sin(angle) * 15;
+        this.life = 100;
+        this.active = true;
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life--;
+        if (this.life <= 0) this.active = false;
+
+        // Check collision with tornados
+        for (let t of tornados) {
+            let dx = this.x - t.x;
+            let dy = this.y - t.y;
+            let dist = Math.sqrt(dx*dx + dy*dy);
+            if (dist < t.radius * 0.3) { // Hit the eye
+                t.collectData();
+                this.active = false;
+                createExplosion(this.x, this.y, 'spark');
+                score += 500 * t.efLevel;
+                updateHUD();
+                break;
+            }
+        }
+    }
+
+    draw(ctx, camX, camY) {
+        ctx.fillStyle = '#0ff';
+        ctx.beginPath();
+        ctx.arc(this.x - camX, this.y - camY, 3, 0, Math.PI*2);
+        ctx.fill();
+        // Trail
+        ctx.strokeStyle = 'rgba(0, 255, 255, 0.5)';
+        ctx.beginPath();
+        ctx.moveTo(this.x - camX, this.y - camY);
+        ctx.lineTo(this.x - camX - this.vx*2, this.y - camY - this.vy*2);
+        ctx.stroke();
+    }
+}
+
+class Tornado {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.targetX = x;
+        this.targetY = y;
+        this.radius = 50;
+        this.efLevel = 1;
+        this.angle = 0;
+        this.speed = 2;
+        this.windStrength = 0;
+        this.damageCooldown = 0;
+        
+        this.determineCategory();
+    }
+
+    determineCategory() {
+        // Procedural category based on level and randomness
+        const rand = Math.random();
+        if (level > 5 && rand > 0.95) this.efLevel = 5;
+        else if (level > 3 && rand > 0.85) this.efLevel = 4;
+        else if (level > 2 && rand > 0.7) this.efLevel = 3;
+        else if (rand > 0.5) this.efLevel = 2;
+        else this.efLevel = 1;
+
+        // Stats based on EF scale
+        this.radius = 40 + (this.efLevel * 15);
+        this.windStrength = 20 + (this.efLevel * 15);
+        this.speed = 1 + (this.efLevel * 0.5);
+        this.color = this.getEFColor();
+    }
+
+    getEFColor() {
+        switch(this.efLevel) {
+            case 1: return '#88ccff';
+            case 2: return '#44aaff';
+            case 3: return '#aa44ff';
+            case 4: return '#ff4444';
+            case 5: return '#ffffff'; // White wall of death
+            default: return '#88ccff';
+        }
+    }
+
+    update() {
+        // Move towards random point or follow player loosely
+        if (Math.random() < 0.01) {
+            this.targetX = player.x + (Math.random() - 0.5) * 1000;
+            this.targetY = player.y + (Math.random() - 0.5) * 1000;
+        }
+
+        let dx = this.targetX - this.x;
+        let dy = this.targetY - this.y;
+        let dist = Math.sqrt(dx*dx + dy*dy);
+        
+        if (dist > 10) {
+            this.x += (dx / dist) * this.speed;
+            this.y += (dy / dist) * this.speed;
+        }
+
+        this.angle += 0.2 + (this.efLevel * 0.1);
+
+        // Apply wind to player
+        let pdx = player.x - this.x;
+        let pdy = player.y - this.y;
+        let pDist = Math.sqrt(pdx*pdx + pdy*pdy);
+
+        if (pDist < this.radius * 3) {
+            // Suction force
+            let force = (this.windStrength * 50) / (pDist + 10);
+            let fx = (pdx / pDist) * force;
+            let fy = (pdy / pDist) * force;
+
+            // Rotational force
+            let rotForce = force * 0.5;
+            let rfx = -fy * 0.1;
+            let rfy = fx * 0.1;
+
+            if (!player.anchored) {
+                player.vx += fx + rfx;
+                player.vy += fy + rfy;
+            } else {
+                // If anchored, take damage instead of moving
+                if (frameCount % 10 === 0) {
+                    player.takeDamage(this.efLevel * 2);
+                }
+            }
+
+            // Visual wind effect on screen if close
+            if (pDist < 200) {
+                camera.shake = (this.efLevel * 2) * (1 - pDist/200);
+            }
+        }
+
+        if (this.damageCooldown > 0) this.damageCooldown--;
+    }
+
+    collectData() {
+        // Visual feedback handled in probe collision
+        this.efLevel++; // Upgrade tornado slightly after being probed? Or just score
+        if (this.efLevel > 5) this.efLevel = 5;
+    }
+
+    draw(ctx, camX, camY) {
+        let drawX = this.x - camX;
+        let drawY = this.y - camY;
+
+        // Draw Funnel
+        ctx.save();
+        ctx.translate(drawX, drawY);
+        ctx.rotate(this.angle);
+        
+        // Gradient for funnel
+        let grad = ctx.createRadialGradient(0, 0, 10, 0, 0, this.radius);
+        grad.addColorStop(0, 'rgba(200, 200, 200, 0.1)');
+        grad.addColorStop(0.5, this.color.replace(')', ', 0.4)').replace('rgb', 'rgba'));
+        grad.addColorStop(1, 'rgba(0,0,0,0)');
+        
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        // Spiral shape approximation
+        for(let i=0; i<10; i++) {
+            ctx.rotate(Math.PI / 5);
+            ctx.ellipse(0, -this.radius/2, this.radius/4, this.radius, 0, 0, Math.PI*2);
+        }
+        ctx.fill();
+
+        // Debris ring
+        ctx.strokeStyle = '#332211';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, this.radius * 0.8, 0, Math.PI*2);
+        ctx.stroke();
+
+        ctx.restore();
+
+        // Label
+        ctx.fillStyle = '#fff';
+        ctx.font = '12px Courier New';
+        ctx.textAlign = 'center';
+        ctx.fillText(`EF-${this.efLevel}`, drawX, drawY - this.radius - 10);
+    }
+}
+
+class Player {
+    constructor() {
+        this.x = WORLD_SIZE / 2;
+        this.y = WORLD_SIZE / 2;
+        this.vx = 0;
+        this.vy = 0;
+        this.angle = 0;
+        this.health = 100;
+        this.turbo = 100;
+        this.anchored = false;
+        this.probes = 5;
+        this.width = 40;
+        this.height = 70;
+        this.speed = 0;
+        this.maxSpeed = 12;
+        this.acceleration = 0.5;
+        this.probeCooldown = false;
+    }
+
+    update() {
+        // Controls
+        let inputX = 0;
+        let inputY = 0;
+
+        if (keys.w || keys.ArrowUp) inputY = -1;
+        if (keys.s || keys.ArrowDown) inputY = 1;
+        if (keys.a || keys.ArrowLeft) inputX = -1;
+        if (keys.d || keys.ArrowRight) inputX = 1;
+
+        // Anchoring Logic
+        if (keys.e && !this.anchored && this.speed < 1) {
+            this.anchored = true;
+            this.vx = 0;
+            this.vy = 0;
+            createExplosion(this.x, this.y + 20, 'spark'); // Spike effect
+        } else if (!keys.e && this.anchored) {
+            this.anchored = false;
+        }
+
+        if (!this.anchored) {
+            // Acceleration
+            if (inputX !== 0 || inputY !== 0) {
+                // Calculate target angle based on input
+                let targetAngle = Math.atan2(inputY, inputX);
+                
+                // Smooth rotation
+                let diff = targetAngle - this.angle;
+                while (diff < -Math.PI) diff += Math.PI * 2;
+                while (diff > Math.PI) diff -= Math.PI * 2;
+                this.angle += diff * 0.1;
+
+                // Turbo
+                let currentAccel = this.acceleration;
+                if (keys.Space && this.turbo > 0) {
+                    currentAccel *= 2;
+                    this.turbo -= 0.5;
+                    // Turbo particles
+                    if (frameCount % 2 === 0) {
+                        let backX = this.x - Math.cos(this.angle) * 30;
+                        let backY = this.y - Math.sin(this.angle) * 30;
+                        particles.push(new Particle(backX, backY, 'spark'));
+                    }
+                } else if (this.turbo < 100) {
+                    this.turbo += 0.1;
+                }
+
+                this.vx += Math.cos(this.angle) * currentAccel;
+                this.vy += Math.sin(this.angle) * currentAccel;
+            }
+
+            // Friction
+            let friction = ROAD_FRICTION; 
+            // Simple terrain check (noise could be added here for offroad)
+            if (Math.abs(this.vx) > 0.1 || Math.abs(this.vy) > 0.1) {
+                 // Simulate rough terrain occasionally
+                 if (Math.sin(this.x * 0.01) * Math.cos(this.y * 0.01) > 0.8) friction = OFFROAD_FRICTION;
+            }
+
+            this.vx *= friction;
+            this.vy *= friction;
+        } else {
+            // Regenerate turbo when anchored
+            if (this.turbo < 100) this.turbo += 0.5;
+        }
+
+        // Apply Velocity
+        this.x += this.vx;
+        this.y += this.vy;
+
+        // World Bounds
+        this.x = Math.max(0, Math.min(WORLD_SIZE, this.x));
+        this.y = Math.max(0, Math.min(WORLD_SIZE, this.y));
+
+        // Calculate Speed for HUD
+        this.speed = Math.sqrt(this.vx*this.vx + this.vy*this.vy) * 10;
+
+        // Cooldown for probe launch
+        if (keys.q && this.probes > 0 && !this.probeCooldown) {
+            this.launchProbe();
+            this.probeCooldown = true;
+            setTimeout(() => this.probeCooldown = false, 500);
+        }
+    }
+
+    launchProbe() {
+        probes.push(new Probe(this.x, this.y, this.angle));
+        this.probes--;
+        updateHUD();
+    }
+
+    takeDamage(amount) {
+        this.health -= amount;
+        createExplosion(this.x, this.y, 'spark');
+        if (this.health <= 0) {
+            this.health = 0;
+            gameOver();
+        }
+        updateHUD();
+    }
+
+    draw(ctx, camX, camY) {
+        let drawX = this.x - camX;
+        let drawY = this.y - camY;
+
+        ctx.save();
+        ctx.translate(drawX, drawY);
+        ctx.rotate(this.angle);
+
+        // Shadow
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(-20, -35, 44, 74);
+
+        // Chassis (Interceptor X-1 Design)
+        ctx.fillStyle = '#222';
+        ctx.fillRect(-20, -35, 40, 70);
+        
+        // Armor Plating
+        ctx.fillStyle = '#334455';
+        ctx.fillRect(-18, -30, 36, 60);
+        
+        // Reinforced Bumper
+        ctx.fillStyle = '#556677';
+        ctx.fillRect(-22, 30, 44, 5);
+
+        // Cabin / Windshield
+        ctx.fillStyle = '#111';
+        ctx.beginPath();
+        ctx.moveTo(-15, -10);
+        ctx.lineTo(15, -10);
+        ctx.lineTo(10, 15);
+        ctx.lineTo(-10, 15);
+        ctx.fill();
+        
+        // Glass reflection
+        ctx.fillStyle = 'rgba(0, 255, 255, 0.3)';
+        ctx.beginPath();
+        ctx.moveTo(-12, -8);
+        ctx.lineTo(12, -8);
+        ctx.lineTo(8, 12);
+        ctx.lineTo(-8, 12);
+        ctx.fill();
+
+        // Roof Lights
+        ctx.fillStyle = this.anchored ? '#f00' : '#ffaa00';
+        ctx.beginPath();
+        ctx.arc(0, 0, 4, 0, Math.PI*2);
+        ctx.fill();
+        if (this.anchored) {
+            // Blinking light effect
+            if (Math.floor(Date.now() / 100) % 2 === 0) {
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(0, 0, 6, 0, Math.PI*2);
+                ctx.fill();
+            }
+        }
+
+        // Wheels
+        ctx.fillStyle = '#111';
+        ctx.fillRect(-24, -25, 8, 15); // FL
+        ctx.fillRect(16, -25, 8, 15);  // FR
+        ctx.fillRect(-24, 15, 8, 15);  // RL
+        ctx.fillRect(16, 15, 8, 15);   // RR
+
+        // Spikes (Visual only when active)
+        if (this.anchored) {
+            ctx.strokeStyle = '#888';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(-15, 35); ctx.lineTo(-15, 45);
+            ctx.moveTo(0, 35); ctx.lineTo(0, 50);
+            ctx.moveTo(15, 35); ctx.lineTo(15, 45);
+            ctx.stroke();
+        }
+
+        // Probe Launcher Mount
+        ctx.fillStyle = '#444';
+        ctx.fillRect(-5, -40, 10, 10);
+
+        ctx.restore();
+    }
+}
+
+// --- SYSTEMS ---
+
+function createExplosion(x, y, type) {
+    for(let i=0; i<10; i++) {
+        particles.push(new Particle(x, y, type));
+    }
+}
+
+function spawnTornado() {
+    // Spawn away from player
+    let angle = Math.random() * Math.PI * 2;
+    let dist = 800 + Math.random() * 400;
+    let x = player.x + Math.cos(angle) * dist;
+    let y = player.y + Math.sin(angle) * dist;
+    
+    // Clamp to world
+    x = Math.max(100, Math.min(WORLD_SIZE-100, x));
+    y = Math.max(100, Math.min(WORLD_SIZE-100, y));
+
+    tornados.push(new Tornado(x, y));
+}
+
+function updateEnvironment() {
+    // Rain
+    if (frameCount % 5 === 0) {
+        let rx = player.x + (Math.random() - 0.5) * 1200;
+        let ry = player.y + (Math.random() - 0.5) * 1200;
+        particles.push(new Particle(rx, ry, 'rain'));
+    }
+
+    // Debris in high wind
+    if (tornados.length > 0 && Math.random() < 0.1) {
+        let t = tornados[Math.floor(Math.random() * tornados.length)];
+        let angle = Math.random() * Math.PI * 2;
+        let r = t.radius * 1.5;
+        debris.push({
+            x: t.x + Math.cos(angle) * r,
+            y: t.y + Math.sin(angle) * r,
+            vx: (Math.random()-0.5)*5,
+            vy: (Math.random()-0.5)*5,
+            life: 100
+        });
+    }
+}
+
+function drawGround(ctx, camX, camY) {
+    // Draw Grid/Terrain
+    ctx.fillStyle = '#0a0a0a';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.save();
+    ctx.translate(-camX, -camY);
+
+    // Grid lines
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 2;
+    const gridSize = 100;
+    
+    // Optimize drawing: only draw visible grid
+    let startX = Math.floor(camX / gridSize) * gridSize;
+    let startY = Math.floor(camY / gridSize) * gridSize;
+
+    for (let x = startX; x < camX + canvas.width + gridSize; x += gridSize) {
+        ctx.beginPath();
+        ctx.moveTo(x, camY);
+        ctx.lineTo(x, camY + canvas.height);
+        ctx.stroke();
+    }
+    for (let y = startY; y < camY + canvas.height + gridSize; y += gridSize) {
+        ctx.beginPath();
+        ctx.moveTo(camX, y);
+        ctx.lineTo(camX + canvas.width, y);
+        ctx.stroke();
+    }
+
+    // World Borders
+    ctx.strokeStyle = '#f00';
+    ctx.lineWidth = 5;
+    ctx.strokeRect(0, 0, WORLD_SIZE, WORLD_SIZE);
+
+    ctx.restore();
+}
+
+function updateHUD() {
+    // Health
+    document.getElementById('health-val').innerText = Math.ceil(player.health) + '%';
+    let hpBar = document.getElementById('health-bar');
+    hpBar.style.width = player.health + '%';
+    hpBar.style.background = player.health < 30 ? '#f00' : '#0f0';
+
+    // Turbo
+    document.getElementById('turbo-val').innerText = Math.ceil(player.turbo) + '%';
+    document.getElementById('turbo-bar').style.width = player.turbo + '%';
+
+    // Anchor
+    let anchorEl = document.getElementById('anchor-status');
+    if (player.anchored) {
+        anchorEl.innerText = "ACTIVADO";
+        anchorEl.style.color = "#f00";
+    } else {
+        anchorEl.innerText = "DESACTIVADO";
+        anchorEl.style.color = "#555";
+    }
+
+    // Probes
+    document.getElementById('probe-count').innerText = `${player.probes}/5`;
+
+    // Score & Level
+    document.getElementById('score-val').innerText = score;
+    document.getElementById('level-val').innerText = level;
+
+    // Wind Data (Nearest Tornado)
+    let nearestWind = 0;
+    let nearestThreat = "BAJA";
+    let nearestEF = "-";
+    
+    if (tornados.length > 0) {
+        let minDist = Infinity;
+        let closestT = null;
+        for (let t of tornados) {
+            let d = Math.sqrt((player.x-t.x)**2 + (player.y-t.y)**2);
+            if (d < minDist) {
+                minDist = d;
+                closestT = t;
+            }
+        }
+        
+        if (closestT) {
+            // Calculate perceived wind speed based on distance and EF
+            let effectiveDist = Math.max(1, minDist - closestT.radius);
+            let wind = Math.floor((closestT.windStrength * 100) / (effectiveDist + 50));
+            if (wind > 200) wind = 200; // Cap display
+            
+            nearestWind = wind;
+            nearestEF = `EF-${closestT.efLevel}`;
+            
+            if (wind > 100) nearestThreat = "CRÍTICA";
+            else if (wind > 50) nearestThreat = "ALTA";
+            else if (wind > 20) nearestThreat = "MODERADA";
+        }
+    }
+
+    let windEl = document.getElementById('wind-speed');
+    windEl.innerText = nearestWind + " km/h";
+    windEl.className = nearestWind > 100 ? 'value-crit' : (nearestWind > 50 ? 'value-high' : '');
+    
+    document.getElementById('threat-level').innerText = nearestThreat;
+    document.getElementById('threat-level').className = nearestThreat === "CRÍTICA" ? 'value-crit' : '';
+    document.getElementById('ef-category').innerText = nearestEF;
+}
+
+function drawSpeedometer() {
+    speedoCtx.clearRect(0, 0, 400, 120);
+    
+    let centerX = 200;
+    let centerY = 130;
+    let radius = 100;
+
+    // Background Arc
+    speedoCtx.beginPath();
+    speedoCtx.arc(centerX, centerY, radius, Math.PI, 0);
+    speedoCtx.lineWidth = 15;
+    speedoCtx.strokeStyle = '#111';
+    speedoCtx.stroke();
+
+    // Value Arc
+    let maxSpeed = 200;
+    let currentSpeed = Math.min(player.speed, maxSpeed);
+    let percent = currentSpeed / maxSpeed;
+    let startAngle = Math.PI;
+    let endAngle = Math.PI + (Math.PI * percent);
+
+    let grad = speedoCtx.createLinearGradient(100, 0, 300, 0);
+    grad.addColorStop(0, '#0f0');
+    grad.addColorStop(0.7, '#ff0');
+    grad.addColorStop(1, '#f00');
+
+    speedoCtx.beginPath();
+    speedoCtx.arc(centerX, centerY, radius, startAngle, endAngle);
+    speedoCtx.lineWidth = 15;
+    speedoCtx.strokeStyle = grad;
+    speedoCtx.lineCap = 'round';
+    speedoCtx.stroke();
+
+    // Text
+    speedoCtx.fillStyle = '#fff';
+    speedoCtx.font = 'bold 30px Courier New';
+    speedoCtx.textAlign = 'center';
+    speedoCtx.fillText(Math.floor(currentSpeed), centerX, centerY - 20);
+    
+    speedoCtx.fillStyle = '#aaa';
+    speedoCtx.font = '12px Courier New';
+    speedoCtx.fillText("KM/H", centerX, centerY + 10);
+}
+
+function drawRadar() {
+    radarCtx.clearRect(0, 0, 100, 100);
+    
+    // Center (Player)
+    radarCtx.fillStyle = '#0f0';
+    radarCtx.beginPath();
+    radarCtx.arc(50, 50, 3, 0, Math.PI*2);
+    radarCtx.fill();
+
+    // Tornado Blips
+    radarCtx.fillStyle = '#f00';
+    for (let t of tornados) {
+        let dx = t.x - player.x;
+        let dy = t.y - player.y;
+        
+        // Scale down to radar size (range 1000px)
+        let scale = 40 / 1000; 
+        let rx = 50 + dx * scale;
+        let ry = 50 + dy * scale;
+
+        // Only draw if in range
+        if (rx > 0 && rx < 100 && ry > 0 && ry < 100) {
+            let size = 2 + t.efLevel;
+            radarCtx.beginPath();
+            radarCtx.arc(rx, ry, size, 0, Math.PI*2);
+            radarCtx.fill();
+        }
+    }
+
+    // Sweep effect
+    let time = Date.now() / 1000;
+    let angle = time * 2;
+    radarCtx.strokeStyle = 'rgba(0, 255, 0, 0.3)';
+    radarCtx.beginPath();
+    radarCtx.moveTo(50, 50);
+    radarCtx.lineTo(50 + Math.cos(angle)*50, 50 + Math.sin(angle)*50);
+    radarCtx.stroke();
+}
+
+// --- MAIN LOOP ---
+
+function init() {
+    resize();
+    window.addEventListener('resize', resize);
+    
+    window.addEventListener('keydown', e => {
+        if (e.code === 'Space') keys.Space = true;
+        if (e.key.toLowerCase() === 'w') keys.w = true;
+        if (e.key.toLowerCase() === 'a') keys.a = true;
+        if (e.key.toLowerCase() === 's') keys.s = true;
+        if (e.key.toLowerCase() === 'd') keys.d = true;
+        if (e.key === 'ArrowUp') keys.ArrowUp = true;
+        if (e.key === 'ArrowLeft') keys.ArrowLeft = true;
+        if (e.key === 'ArrowDown') keys.ArrowDown = true;
+        if (e.key === 'ArrowRight') keys.ArrowRight = true;
+        if (e.key.toLowerCase() === 'e') keys.e = true;
+        if (e.key.toLowerCase() === 'q') keys.q = true;
+    });
+
+    window.addEventListener('keyup', e => {
+        if (e.code === 'Space') keys.Space = false;
+        if (e.key.toLowerCase() === 'w') keys.w = false;
+        if (e.key.toLowerCase() === 'a') keys.a = false;
+        if (e.key.toLowerCase() === 's') keys.s = false;
+        if (e.key.toLowerCase() === 'd') keys.d = false;
+        if (e.key === 'ArrowUp') keys.ArrowUp = false;
+        if (e.key === 'ArrowLeft') keys.ArrowLeft = false;
+        if (e.key === 'ArrowDown') keys.ArrowDown = false;
+        if (e.key === 'ArrowRight') keys.ArrowRight = false;
+        if (e.key.toLowerCase() === 'e') keys.e = false;
+        if (e.key.toLowerCase() === 'q') keys.q = false;
+    });
+}
+
+function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+}
+
+function startGame() {
+    document.getElementById('start-screen').classList.add('hidden');
+    document.getElementById('game-over-screen').classList.add('hidden');
+    
+    player = new Player();
+    tornados = [];
+    probes = [];
+    particles = [];
+    debris = [];
+    score = 0;
+    level = 1;
+    gameRunning = true;
+    
+    // Initial Tornado
+    spawnTornado();
+    
+    requestAnimationFrame(loop);
+}
+
+function gameOver() {
+    gameRunning = false;
+    document.getElementById('final-score').innerText = score;
+    document.getElementById('game-over-screen').classList.remove('hidden');
+}
+
+function resetGame() {
+    startGame();
+}
+
+function loop(timestamp) {
+    if (!gameRunning) return;
+
+    let dt = timestamp - lastTime;
+    lastTime = timestamp;
+    frameCount++;
+
+    // Level Progression
+    if (score > level * 2000) {
+        level++;
+        spawnTornado();
+        player.probes = Math.min(player.probes + 2, 10); // Resupply
+        updateHUD();
+    }
+
+    // Update Entities
+    player.update();
+    
+    // Camera Follow
+    camera.x = player.x - canvas.width / 2;
+    camera.y = player.y - canvas.height / 2;
+    
+    // Camera Shake decay
+    if (camera.shake > 0) {
+        camera.x += (Math.random() - 0.5) * camera.shake;
+        camera.y += (Math.random() - 0.5) * camera.shake;
+        camera.shake *= 0.9;
+        if (camera.shake < 0.5) camera.shake = 0;
+    }
+
+    // Spawn logic
+    if (tornados.length < level && Math.random() < 0.005) {
+        spawnTornado();
+    }
+
+    tornados.forEach(t => t.update());
+    probes.forEach((p, i) => {
+        p.update();
+        if (!p.active) probes.splice(i, 1);
+    });
+    
+    updateEnvironment();
+    
+    particles.forEach((p, i) => {
+        p.update(0, 0); // Simplified wind for particles
+        if (p.life <= 0) particles.splice(i, 1);
+    });
+
+    // Render
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    drawGround(ctx, camera.x, camera.y);
+    
+    debris.forEach(d => {
+        d.x += d.vx;
+        d.y += d.vy;
+        d.life--;
+        ctx.fillStyle = '#543';
+        ctx.fillRect(d.x - camera.x, d.y - camera.y, 4, 4);
+        if(d.life <= 0) debris.shift();
+    });
+
+    tornados.forEach(t => t.draw(ctx, camera.x, camera.y));
+    probes.forEach(p => p.draw(ctx, camera.x, camera.y));
+    player.draw(ctx, camera.x, camera.y);
+    particles.forEach(p => p.draw(ctx, camera.x, camera.y));
+
+    // UI Updates
+    updateHUD();
+    drawSpeedometer();
+    drawRadar();
+
+    requestAnimationFrame(loop);
+}
+
+// Initialize
+init();
+
+</script>
+</body>
+</html>
